@@ -1,0 +1,586 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <title>Music Genre Network Explorer</title>
+    <script src="https://d3js.org/d3.v7.min.js"></script>
+    <style>
+        body {
+            margin: 0;
+            font-family: sans-serif;
+            overflow: hidden;
+            background-color: #f4f4f4;
+        }
+
+        .links line {
+            stroke-opacity: 0.8;
+        }
+
+        .nodes circle {
+            stroke: #fff;
+            stroke-width: 1.5px;
+            cursor: pointer;
+        }
+
+        .nodes text {
+            font: 12px sans-serif;
+            pointer-events: none;
+            text-shadow: 0 1px 0 #fff, 1px 0 0 #fff, 0 -1px 0 #fff, -1px 0 0 #fff;
+        }
+
+        .tooltip {
+            position: absolute;
+            text-align: center;
+            padding: 8px;
+            font: 14px sans-serif;
+            background: lightsteelblue;
+            border: 0px;
+            border-radius: 8px;
+            pointer-events: none;
+            opacity: 0;
+        }
+
+        .header {
+            position: absolute;
+            top: 10px;
+            left: 10px;
+            padding: 15px;
+            background: rgba(255, 255, 255, 0.95);
+            border-radius: 8px;
+            box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
+            max-width: 300px;
+            z-index: 1000;
+        }
+
+        .header h3 {
+            margin: 0 0 10px 0;
+            color: #333;
+        }
+
+        .header #status {
+            margin-bottom: 5px;
+            font-weight: bold;
+            color: #555;
+        }
+
+        .header #info {
+            margin-bottom: 15px;
+            font-size: 0.9em;
+            color: #666;
+        }
+
+        .header a {
+            color: steelblue;
+            text-decoration: none;
+            font-weight: bold;
+        }
+
+        .header a:hover {
+            text-decoration: underline;
+        }
+
+        /* Search Bar */
+        #search-container {
+            position: relative;
+            margin-bottom: 15px;
+        }
+
+        #search-input {
+            width: 100%;
+            padding: 8px;
+            box-sizing: border-box;
+            border: 1px solid #ccc;
+            border-radius: 4px;
+        }
+
+        #suggestions {
+            position: absolute;
+            top: 100%;
+            left: 0;
+            right: 0;
+            background: white;
+            border: 1px solid #ccc;
+            border-top: none;
+            max-height: 150px;
+            overflow-y: auto;
+            z-index: 1001;
+            display: none;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+        }
+
+        .suggestion-item {
+            padding: 8px;
+            cursor: pointer;
+            border-bottom: 1px solid #eee;
+            font-size: 13px;
+        }
+
+        .suggestion-item:hover {
+            background-color: #f0f0f0;
+        }
+
+        button {
+            padding: 8px 15px;
+            cursor: pointer;
+            background: steelblue;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            font-size: 14px;
+            width: 100%;
+        }
+
+        button:hover {
+            background: #4682b4;
+        }
+
+        /* Bottom Right Legend */
+        .legend-container {
+            position: absolute;
+            bottom: 20px;
+            right: 20px;
+            background: rgba(255, 255, 255, 0.9);
+            padding: 10px;
+            border-radius: 5px;
+            box-shadow: 0 0 5px rgba(0, 0, 0, 0.1);
+        }
+
+        .legend-item {
+            display: flex;
+            align-items: center;
+            margin-bottom: 5px;
+            font-size: 12px;
+        }
+
+        .color-box {
+            width: 15px;
+            height: 15px;
+            margin-right: 8px;
+            border-radius: 3px;
+        }
+
+        /* Marker Colors */
+        #arrow-subgenre {
+            fill: steelblue;
+        }
+
+        #arrow-fusion {
+            fill: orange;
+        }
+
+        #arrow-origin {
+            fill: green;
+        }
+
+        #arrow-derivative {
+            fill: #9932CC;
+        }
+
+        /* DarkOrchid */
+    </style>
+</head>
+
+<body>
+    <div class="header">
+        <h3>Graph Explorer</h3>
+
+        <div id="search-container">
+            <input type="text" id="search-input" placeholder="Search genre..." autocomplete="off">
+            <div id="suggestions"></div>
+        </div>
+
+        <div id="status">Select a genre...</div>
+        <div id="info"></div>
+        <div id="link-container"></div>
+        <button onclick="resetGraph()">Reset to Jazz</button>
+        <button id="toggleBtn" onclick="toggleView()" style="margin-top: 5px;">Switch to Full Graph</button>
+    </div>
+
+    <div class="legend-container">
+        <div class="legend-item">
+            <div class="color-box" style="background: #ff4444;"></div>Focused Node
+        </div>
+        <div class="legend-item">
+            <div class="color-box" style="background: steelblue;"></div>Subgenre (Out)
+        </div>
+        <div class="legend-item">
+            <div class="color-box" style="background: orange;"></div>Fusion (Out)
+        </div>
+        <div class="legend-item">
+            <div class="color-box" style="background: #9932CC;"></div>Derivative (Out)
+        </div>
+        <div class="legend-item">
+            <div class="color-box" style="background: green;"></div>Origin (In)
+        </div>
+    </div>
+
+    <div id="graph-container"></div>
+    <div class="tooltip" id="tooltip"></div>
+
+    <script>
+        const color = d3.scaleOrdinal(d3.schemeCategory10);
+
+        d3.json("music_genres_clean.json").then(function (graph) {
+
+            var width = window.innerWidth,
+                height = window.innerHeight;
+
+            var svg = d3.select("#graph-container").append("svg")
+                .attr("width", width)
+                .attr("height", height)
+                .call(d3.zoom().on("zoom", function (event) {
+                    g.attr("transform", event.transform);
+                }))
+                .append("g");
+
+            var g = svg.append("g");
+
+            // Markers
+            svg.append("defs").selectAll("marker")
+                .data(["subgenre", "fusion", "origin", "derivative"])
+                .enter().append("marker")
+                .attr("id", function (d) { return "arrow-" + d; })
+                .attr("viewBox", "0 -5 10 10")
+                .attr("refX", 18) // Adjusted for node radius
+                .attr("refY", 0)
+                .attr("markerWidth", 6)
+                .attr("markerHeight", 6)
+                .attr("orient", "auto")
+                .append("path")
+                .attr("d", "M0,-5L10,0L0,5")
+                .attr("class", "arrowHead");
+
+            // --- Data Processing ---
+            var adj = new Map();
+            graph.nodes.forEach(n => {
+                adj.set(n.id, []);
+            });
+            graph.links.forEach(l => {
+                let s = l.source;
+                let t = l.target;
+                if (adj.has(s)) adj.get(s).push({ neighbor: t, type: l.type, dir: 'out', link: l });
+                if (adj.has(t)) adj.get(t).push({ neighbor: s, type: l.type, dir: 'in', link: l });
+            });
+
+            var nodeMap = new Map(graph.nodes.map(n => [n.id, n]));
+            let rootId = graph.nodes.find(n => n.name === "Jazz").id;
+            var currentCenterId = rootId;
+
+            // --- Search Functionality ---
+            const searchInput = document.getElementById("search-input");
+            const suggestionsBox = document.getElementById("suggestions");
+
+            searchInput.addEventListener("input", function () {
+                const query = this.value.toLowerCase();
+                suggestionsBox.innerHTML = "";
+
+                if (query.length < 2) {
+                    suggestionsBox.style.display = "none";
+                    return;
+                }
+
+                // Simple search logic
+                const matches = graph.nodes.filter(n => n.name.toLowerCase().includes(query)).slice(0, 10);
+
+                if (matches.length > 0) {
+                    suggestionsBox.style.display = "block";
+                    matches.forEach(node => {
+                        const div = document.createElement("div");
+                        div.className = "suggestion-item";
+                        div.textContent = node.name;
+                        div.onclick = () => {
+                            searchInput.value = node.name;
+                            suggestionsBox.style.display = "none";
+                            update(node.id); // Navigate to node
+                        };
+                        suggestionsBox.appendChild(div);
+                    });
+                } else {
+                    suggestionsBox.style.display = "none";
+                }
+            });
+
+            // Close suggestions on click outside
+            document.addEventListener("click", function (e) {
+                if (e.target !== searchInput) {
+                    suggestionsBox.style.display = "none";
+                }
+            });
+
+            // --- Simulation ---
+            var simulation = d3.forceSimulation()
+                .force("link", d3.forceLink().id(d => d.id).distance(120))
+                .force("charge", d3.forceManyBody().strength(-500))
+                .force("center", d3.forceCenter(width / 2, height / 2))
+                .force("collide", d3.forceCollide(40));
+
+            var linkGroup = g.append("g").attr("class", "links");
+            var nodeGroup = g.append("g").attr("class", "nodes");
+
+            let viewMode = 'focused';
+
+            window.toggleView = function () {
+                if (viewMode === 'focused') {
+                    viewMode = 'full';
+                    d3.select("#toggleBtn").text("Switch to Focused View");
+                    update(currentCenterId);
+                } else {
+                    viewMode = 'focused';
+                    d3.select("#toggleBtn").text("Switch to Full Graph");
+                    update(currentCenterId);
+                }
+            };
+
+            function update(centerId) {
+                currentCenterId = centerId;
+                let visibleNodes, relevantLinks;
+
+                if (viewMode === 'full') {
+                    // --- Full Graph Mode ---
+                    d3.select("#status").text("Full Graph Overview");
+                    d3.select("#info").text("Showing " + graph.nodes.length + " nodes");
+                    d3.select("#link-container").html("");
+
+                    visibleNodes = graph.nodes;
+                    relevantLinks = graph.links;
+
+                    // Reset roles
+                    visibleNodes.forEach(n => { n._role = 'full'; });
+
+                } else {
+                    // --- Focused Mode ---
+                    let centerNode = nodeMap.get(centerId);
+
+                    // Update Header Info
+                    d3.select("#status").text(centerNode.name);
+                    d3.select("#info").text(centerNode.period ? centerNode.period : "Period unknown");
+
+                    if (centerNode.url) {
+                        d3.select("#link-container").html(`<a href="${centerNode.url}" target="_blank">View on Wikipedia &rarr;</a>`);
+                    } else {
+                        d3.select("#link-container").html("");
+                    }
+
+                    // Tag Roles for Layout
+                    centerNode._role = 'center';
+
+                    // Filter Data: Center + Neighbors
+                    let neighbors = adj.get(centerId) || [];
+                    let nodeIds = new Set();
+                    nodeIds.add(centerId);
+
+                    relevantLinks = [];
+
+                    neighbors.forEach(n => {
+                        nodeIds.add(n.neighbor);
+                        let neighborNode = nodeMap.get(n.neighbor);
+
+                        // Assign Role relative to center
+                        if (n.dir === 'in') {
+                            neighborNode._role = 'origin'; // Parent
+                        } else {
+                            // Outgoing: Check Type
+                            if (n.type === 'fusion') neighborNode._role = 'fusion';
+                            else if (n.type === 'derivative') neighborNode._role = 'derivative';
+                            else neighborNode._role = 'subgenre';
+                        }
+
+                        // Construct Links (using IDs to ensure D3 looks them up again)
+                        if (n.dir === 'out') {
+                            relevantLinks.push({
+                                source: centerId, target: n.neighbor, type: n.type, id: centerId + "-" + n.neighbor
+                            });
+                        } else {
+                            relevantLinks.push({
+                                source: n.neighbor, target: centerId, type: n.type, id: n.neighbor + "-" + centerId
+                            });
+                        }
+                    });
+
+                    visibleNodes = Array.from(nodeIds).map(id => nodeMap.get(id));
+                }
+
+                // LINKS Update
+                var link = linkGroup.selectAll("line")
+                    .data(relevantLinks, d => d.id || ((typeof d.source === 'object' ? d.source.id : d.source) + "-" + (typeof d.target === 'object' ? d.target.id : d.target)));
+                link.exit().remove();
+
+                var linkEnter = link.enter().append("line")
+                    .attr("stroke-width", viewMode === 'full' ? 0.5 : 2) // Thinner lines in full mode
+                    .style("stroke-opacity", viewMode === 'full' ? 0.3 : 1)
+                    .style("stroke", d => {
+                        if (d.type === 'subgenre') return "steelblue";
+                        if (d.type === 'fusion') return "orange";
+                        if (d.type === 'derivative') return "#9932CC";
+                        if (d.type === 'origin') return "green";
+                        return "#ccc";
+                    });
+
+                // Only show arrows in focused mode to reduce clutter
+                if (viewMode !== 'full') {
+                    linkEnter.attr("marker-end", d => "url(#arrow-" + (d.type || 'subgenre') + ")");
+                }
+
+                link = linkEnter.merge(link);
+                // Update styles for existing links too
+                link.attr("stroke-width", viewMode === 'full' ? 0.5 : 2)
+                    .style("stroke-opacity", viewMode === 'full' ? 0.3 : 1);
+
+                if (viewMode === 'full') link.attr("marker-end", null);
+                else link.attr("marker-end", d => "url(#arrow-" + (d.type || 'subgenre') + ")");
+
+
+                // NODES Update
+                var node = nodeGroup.selectAll("g")
+                    .data(visibleNodes, d => d.id);
+                node.exit().remove();
+
+                var nodeEnter = node.enter().append("g")
+                    .call(d3.drag()
+                        .on("start", dragstarted)
+                        .on("drag", dragged)
+                        .on("end", dragended))
+                    .on("click", clicked)
+                    .on("mouseover", showTooltip)
+                    .on("mouseout", hideTooltip);
+
+                // Invisible Hit Area (Larger target)
+                nodeEnter.append("circle")
+                    .attr("class", "hit-area")
+                    .attr("r", 12)
+                    .attr("fill", "transparent")
+                    .attr("stroke", "none");
+
+                // Visible Node Circle
+                nodeEnter.append("circle")
+                    .attr("class", "visible-node")
+                    .attr("r", viewMode === 'full' ? 3 : (d => d.id === centerId ? 15 : 8))
+                    .attr("fill", d => d.id === centerId ? "#ff4444" : color(d.group || 1));
+
+                nodeEnter.append("text")
+                    .attr("dy", 4)
+                    .attr("x", 8)
+                    .style("font-size", "10px")
+                    .style("display", "none") // Hide text initially
+                    .text(d => d.name);
+
+                node = nodeEnter.merge(node);
+
+                // Update Visible Node
+                node.select(".visible-node")
+                    .attr("r", viewMode === 'full' ? 3 : (d => d.id === centerId ? 15 : 8))
+                    .attr("fill", d => d.id === centerId ? "#ff4444" : color(d.group || 1));
+
+                // Update Hit Area (Ensure it covers large nodes)
+                node.select(".hit-area")
+                    .attr("r", d => (d.id === centerId && viewMode !== 'full') ? 20 : 12);
+
+                // Text updates
+                node.select("text")
+                    .style("display", viewMode === 'full' ? "none" : "block")
+                    .attr("x", viewMode === 'full' ? 5 : 16);
+
+
+                // --- SIMULATION FORCES ---
+                simulation.nodes(visibleNodes).on("tick", ticked);
+                simulation.force("link").links(relevantLinks);
+
+                if (viewMode === 'full') {
+                    // Generic Force Layout
+                    simulation
+                        .force("charge", d3.forceManyBody().strength(-30))
+                        .force("collide", d3.forceCollide(4))
+                        .force("center", d3.forceCenter(width / 2, height / 2))
+                        .force("x", null)
+                        .force("y", null);
+                } else {
+                    // Structured Focused Layout
+                    simulation
+                        .force("charge", d3.forceManyBody().strength(-500))
+                        .force("collide", d3.forceCollide(40))
+                        .force("center", d3.forceCenter(width / 2, height / 2))
+                        .force("y", d3.forceY().y(d => {
+                            if (d._role === 'origin') return height / 2 - 200;
+                            if (d._role === 'subgenre') return height / 2 + 200;
+                            if (d._role === 'derivative') return height / 2 + 200;
+                            if (d._role === 'fusion') return height / 2;
+                            return height / 2;
+                        }).strength(d => d._role === 'center' ? 0.1 : 0.8))
+
+                        .force("x", d3.forceX().x(d => {
+                            if (d._role === 'fusion') return width / 2 + 300;
+                            if (d._role === 'derivative') return width / 2 + 150;
+                            if (d._role === 'subgenre') return width / 2 - 150;
+                            if (d._role === 'origin') return width / 2;
+                            return width / 2;
+                        }).strength(d => d._role === 'fusion' ? 0.8 : (d._role === 'derivative' || d._role === 'subgenre' ? 0.5 : 0.05)));
+                }
+
+                simulation.alpha(1).restart();
+
+                function ticked() {
+                    link
+                        .attr("x1", d => d.source.x)
+                        .attr("y1", d => d.source.y)
+                        .attr("x2", d => d.target.x)
+                        .attr("y2", d => d.target.y);
+
+                    node
+                        .attr("transform", d => `translate(${d.x},${d.y})`);
+                }
+            }
+
+            // Interaction
+            function clicked(event, d) {
+                if (event.defaultPrevented) return;
+
+                // If in full mode, clicking a node focuses on it
+                if (viewMode === 'full') {
+                    toggleView(); // Switches to focused
+                    update(d.id);
+                } else {
+                    update(d.id);
+                }
+            }
+
+            window.resetGraph = function () {
+                update(rootId);
+            };
+
+            function dragstarted(event, d) {
+                if (!event.active) simulation.alphaTarget(0.3).restart();
+                d.fx = d.x;
+                d.fy = d.y;
+            }
+
+            function dragged(event, d) {
+                d.fx = event.x;
+                d.fy = event.y;
+            }
+
+            function dragended(event, d) {
+                if (!event.active) simulation.alphaTarget(0);
+                d.fx = null;
+                d.fy = null;
+            }
+
+            function showTooltip(event, d) {
+                d3.select('#tooltip').transition().duration(200).style('opacity', .9);
+                d3.select('#tooltip').html(d.name)
+                    .style("left", (event.pageX + 10) + "px")
+                    .style("top", (event.pageY - 28) + "px");
+            }
+
+            function hideTooltip(d) {
+                d3.select('#tooltip').transition().duration(500).style('opacity', 0);
+            }
+
+            // Initial Load
+            update(rootId);
+
+        });
+    </script>
+</body>
+
+</html>
